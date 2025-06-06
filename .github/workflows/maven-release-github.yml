@@ -1,0 +1,81 @@
+# This workflow will build a package using Maven and then publish it to GitHub packages when a release is created
+# For more information see: https://github.com/actions/setup-java#apache-maven-with-a-settings-path
+
+name: Release to GitHub
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup Java
+        uses: actions/setup-java@v1
+        with:
+          java-version: 1.8
+          server-id: github
+
+      - name: Install GPG Private Key
+        run: echo -e "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+
+      - name: Release
+        run: mvn -pl kafka-connect-http -B deploy -P package,sign
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Prepare artifacts
+        run: mkdir staging && cp kafka-connect-http/target/*.jar staging && cp kafka-connect-http/target/*.tar.gz staging && cp kafka-connect-http/target/*.zip staging
+      - name: Archive artifacts
+        uses: actions/upload-artifact@v1
+        with:
+          name: Package
+          path: staging
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+      - name: Extract tar.gz name
+        id: extract_tar_name
+        run: |
+          ARTIFACT_NAME=$(basename staging/*.tar.gz)
+          echo "::set-output name=artifact_name::$ARTIFACT_NAME"
+      - name: Upload tar.gz
+        id: upload_tar
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: staging/${{ steps.extract_tar_name.outputs.artifact_name }}
+          asset_name: ${{ steps.extract_tar_name.outputs.artifact_name }}
+          asset_content_type: application/tar+gzip
+
+      - name: Extract zip name
+        id: extract_zip_name
+        run: |
+          ARTIFACT_NAME=$(basename staging/*.zip)
+          echo "::set-output name=artifact_name::$ARTIFACT_NAME"
+      - name: Upload zip
+        id: upload_zip
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: staging/${{ steps.extract_zip_name.outputs.artifact_name }}
+          asset_name: ${{ steps.extract_zip_name.outputs.artifact_name }}
+          asset_content_type: application/zip
